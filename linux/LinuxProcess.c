@@ -18,11 +18,12 @@ in the source distribution for its full text.
 
 /*{
 
-#define PROCESS_FLAG_LINUX_IOPRIO   0x0100
-#define PROCESS_FLAG_LINUX_OPENVZ   0x0200
-#define PROCESS_FLAG_LINUX_VSERVER  0x0400
-#define PROCESS_FLAG_LINUX_CGROUP   0x0800
-#define PROCESS_FLAG_LINUX_OOM      0x1000
+#define PROCESS_FLAG_LINUX_IOPRIO      0x0100
+#define PROCESS_FLAG_LINUX_OPENVZ      0x0200
+#define PROCESS_FLAG_LINUX_VSERVER     0x0400
+#define PROCESS_FLAG_LINUX_CGROUP      0x0800
+#define PROCESS_FLAG_LINUX_OOM         0x1000
+#define PROCESS_FLAG_LINUX_VPSADMINOS  0x2000
 
 typedef enum UnsupportedProcessFields {
    FLAGS = 9,
@@ -86,7 +87,11 @@ typedef enum LinuxProcessFields {
    PERCENT_IO_DELAY = 117,
    PERCENT_SWAP_DELAY = 118,
    #endif
-   LAST_PROCESSFIELD = 119,
+   #ifdef HAVE_VPSADMINOS
+   OSCTL_POOL=119,
+   OSCTL_CTID = 120,
+   #endif
+   LAST_PROCESSFIELD = 121,
 } LinuxProcessField;
 
 #include "IOPriority.h"
@@ -139,6 +144,10 @@ typedef struct LinuxProcess_ {
    float cpu_delay_percent;
    float blkio_delay_percent;
    float swapin_delay_percent;
+   #endif
+   #ifdef HAVE_VPSADMINOS
+   char *pool;
+   char *ctid;
    #endif
 } LinuxProcess;
 
@@ -235,6 +244,10 @@ ProcessFieldData Process_fields[] = {
    [PERCENT_IO_DELAY] = { .name = "PERCENT_IO_DELAY", .title = "IOD% ", .description = "Block I/O delay %", .flags = 0, },
    [PERCENT_SWAP_DELAY] = { .name = "PERCENT_SWAP_DELAY", .title = "SWAPD% ", .description = "Swapin delay %", .flags = 0, },
 #endif
+#ifdef HAVE_VPSADMINOS
+   [OSCTL_POOL] = { .name = "Pool", .title = "   Pool ", .description = "vpsAdminOS pool name", .flags = PROCESS_FLAG_LINUX_VPSADMINOS, },
+   [OSCTL_CTID] = { .name = "CTID", .title = "   CTID ", .description = "vpsAdminOS container ID", .flags = PROCESS_FLAG_LINUX_VPSADMINOS, },
+#endif
    [LAST_PROCESSFIELD] = { .name = "*** report bug! ***", .title = NULL, .description = NULL, .flags = 0, },
 };
 
@@ -274,6 +287,12 @@ void Process_delete(Object* cast) {
    Process_done((Process*)cast);
 #ifdef HAVE_CGROUP
    free(this->cgroup);
+#endif
+#ifdef HAVE_VPSADMINOS
+   if (this->ctid) {
+      free(this->pool);
+      free(this->ctid);
+   }
 #endif
    free(this->ttyDevice);
    free(this);
@@ -395,6 +414,12 @@ void LinuxProcess_writeField(Process* this, RichString* str, ProcessField field)
    case PERCENT_IO_DELAY: LinuxProcess_printDelay(lp->blkio_delay_percent, buffer, n); break;
    case PERCENT_SWAP_DELAY: LinuxProcess_printDelay(lp->swapin_delay_percent, buffer, n); break;
    #endif
+   #ifdef HAVE_VPSADMINOS
+   case OSCTL_POOL:
+      xSnprintf(buffer, n, "%7s ", lp->pool ? lp->pool : "-"); break;
+   case OSCTL_CTID:
+      xSnprintf(buffer, n, "%7s ", lp->ctid ? lp->ctid : "-"); break;
+   #endif
    default:
       Process_writeField((Process*)this, str, field);
       return;
@@ -466,6 +491,28 @@ long LinuxProcess_compare(const void* v1, const void* v2) {
    #endif
    case IO_PRIORITY:
       return LinuxProcess_effectiveIOPriority(p1) - LinuxProcess_effectiveIOPriority(p2);
+   #ifdef HAVE_VPSADMINOS
+   case OSCTL_POOL: {
+      if (p1->pool && p2->pool)
+         return strcmp(p1->pool, p2->pool);
+      else if (p1->pool)
+         return 1;
+      else if (p2->pool)
+         return -1;
+      else
+         return 0;
+   }
+   case OSCTL_CTID: {
+      if (p1->ctid && p2->ctid)
+         return strcmp(p1->ctid, p2->ctid);
+      else if (p1->ctid)
+         return 1;
+      else if (p2->ctid)
+         return -1;
+      else
+         return 0;
+   }
+   #endif
    default:
       return Process_compare(v1, v2);
    }
